@@ -11,7 +11,7 @@ type fixturePair struct {
 	mappings map[string]string
 }
 
-func (f *fixturePair) check(t *testing.T, tdb *tokenDb) {
+func (f *fixturePair) check(t *testing.T, tdb *serveDb) {
 	for ident, tok := range f.mappings {
 		resolvTok, ok := tdb.Resolve(ident)
 		if !ok {
@@ -28,7 +28,7 @@ func (f *fixturePair) check(t *testing.T, tdb *tokenDb) {
 
 var fixtures = []fixturePair{
 	{
-		json: []byte(`{"tokens": ` +
+		json: []byte(`{"serves": ` +
 			`{"apple": "orange", "chocolate": "vanilla"}}`),
 		mappings: map[string]string{
 			"apple":     "orange",
@@ -36,7 +36,7 @@ var fixtures = []fixturePair{
 		},
 	},
 	{
-		json: []byte(`{"tokens": ` +
+		json: []byte(`{"serves": ` +
 			`{"bed": "pillow", "lamp": "lightbulb"}}`),
 		mappings: map[string]string{
 			"bed":  "pillow",
@@ -59,7 +59,7 @@ func TestEmptyDB(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 	if err := tdb.Poll(); err != nil {
 		t.Fatalf("Poll on an empty directory should succeed, "+
 			"instead failed: %v", err)
@@ -70,7 +70,7 @@ func TestMultipleLoad(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 	for i := range fixtures {
 		fixture := &fixtures[i]
 		ioutil.WriteFile(tdb.newPath(), fixture.json, 0400)
@@ -95,9 +95,9 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 
-	// Write out some valid input to tokens.new.
+	// Write out some valid input to serves.new.
 	writeLoadFixture := func(fixture *fixturePair) {
 		ioutil.WriteFile(tdb.newPath(), fixture.json, 0400)
 		if err := tdb.Poll(); err != nil {
@@ -109,7 +109,7 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 	fixture := &fixtures[0]
 	writeLoadFixture(fixture)
 
-	// Write a bad tokens.new file.
+	// Write a bad serves.new file.
 	ioutil.WriteFile(tdb.newPath(), []byte(`{}`), 0400)
 	if err := tdb.Poll(); err != nil {
 		t.Fatalf("Poll should succeed with invalid input, "+
@@ -120,7 +120,7 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 	// place.
 	fixture.check(t, tdb)
 
-	// Confirm that the tokens.rej and last_error file have been
+	// Confirm that the serves.rej and last_error file have been
 	// made.
 	_, err := os.Stat(tdb.errPath())
 	if err != nil {
@@ -129,11 +129,11 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 
 	_, err = os.Stat(tdb.rejPath())
 	if err != nil {
-		t.Fatalf("tokens.rej should exist: %v", err)
+		t.Fatalf("serves.rej should exist: %v", err)
 	}
 
 	// Submit a new set of good input, to see if the last_error
-	// and tokens.rej are unlinked.
+	// and serves.rej are unlinked.
 	secondFixture := &fixtures[1]
 	writeLoadFixture(secondFixture)
 
@@ -148,7 +148,7 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 
 	_, err = os.Stat(tdb.rejPath())
 	if err == nil || !os.IsNotExist(err) {
-		t.Fatalf("tokens.rej shouldn't exist: %v", err)
+		t.Fatalf("serves.rej shouldn't exist: %v", err)
 	}
 }
 
@@ -156,9 +156,9 @@ func TestFirstTimeLoadPoll(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 
-	// Write directly to the tokens.loaded file, which is not the
+	// Write directly to the serves.loaded file, which is not the
 	// normal way thing are done; Poll() should move things around
 	// outside a test environment.
 	fixture := &fixtures[0]
@@ -176,14 +176,14 @@ func TestEmptyPoll(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 	err := tdb.Poll()
 	if err != nil {
 		t.Fatalf("An empty database should not cause an error, "+
 			"but got: %v", err)
 	}
 
-	if tdb.identToToken == nil {
+	if tdb.identToServe == nil {
 		t.Fatal("An empty database should yield an " +
 			"empty routing table.")
 	}
@@ -193,9 +193,9 @@ func TestFirstLoadBad(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
-	tdb := newTokenDb(name)
+	tdb := newServeDb(name)
 
-	// Write a bad tokens.new file.
+	// Write a bad serves.new file.
 	ioutil.WriteFile(tdb.newPath(), []byte(`{}`), 0400)
 	if err := tdb.Poll(); err != nil {
 		t.Fatalf("Poll should succeed with invalid input, "+
@@ -208,7 +208,7 @@ func TestFirstLoadBad(t *testing.T) {
 			"but got: %v", err)
 	}
 
-	// Confirm that the tokens.rej and last_error file have been
+	// Confirm that the serves.rej and last_error file have been
 	// made.
 	_, err = os.Stat(tdb.errPath())
 	if err != nil {
@@ -217,6 +217,6 @@ func TestFirstLoadBad(t *testing.T) {
 
 	_, err = os.Stat(tdb.rejPath())
 	if err != nil {
-		t.Fatalf("tokens.rej should exist: %v", err)
+		t.Fatalf("serves.rej should exist: %v", err)
 	}
 }

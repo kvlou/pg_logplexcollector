@@ -156,7 +156,7 @@ func processLogRec(lr *logRecord, lpc *logplexc.Client, exit exitFn) {
 	}
 }
 
-func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *tokenDb) {
+func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *serveDb) {
 	var m femebe.Message
 	var err error
 	stream := femebe.NewServerMessageStream("", rwc)
@@ -203,13 +203,13 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *tokenDb) {
 	ident := processIdentMsg(msgInit, exit)
 	log.Printf("client connects with identifier %q", ident)
 
-	// Resolve the identifier to a token
+	// Resolve the identifier to a serve
 	tok, ok := tdb.Resolve(ident)
 	if !ok {
-		exit("could not resolve identifier to token: %q", ident)
+		exit("could not resolve identifier to serve: %q", ident)
 	}
 
-	// Set up client with token
+	// Set up client with serve
 	cfg.Token = tok
 	client, err := logplexc.NewClient(&cfg)
 	if err != nil {
@@ -256,23 +256,23 @@ func main() {
 			os.Getenv("LOGPLEX_URL"))
 	}
 
-	// Set up token database and perform its input checking
-	tdbDir := os.Getenv("TOKEN_DB_DIR")
+	// Set up serve database and perform its input checking
+	tdbDir := os.Getenv("SERVE_DB_DIR")
 	if tdbDir == "" {
-		log.Fatal("TOKEN_DB_DIR is unset: it must have the value " +
-			"of an existing token database.  " +
+		log.Fatal("SERVE_DB_DIR is unset: it must have the value " +
+			"of an existing serve database.  " +
 			"This can be an be an empty directory.")
 	}
 
-	tdb := newTokenDb(tdbDir)
+	tdb := newServeDb(tdbDir)
 	err = tdb.Poll()
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Fatal("TOKEN_DB_DIR is set to a non-existant "+
+			log.Fatal("SERVE_DB_DIR is set to a non-existant "+
 				"directory: %v", err)
 		}
 
-		log.Fatalf("token database suffers an unrecoverable error: %v",
+		log.Fatalf("serve database suffers an unrecoverable error: %v",
 			err)
 	}
 
@@ -311,7 +311,7 @@ func main() {
 
 		err = tdb.Poll()
 		if err != nil {
-			log.Fatalf("token database suffers unrecoverable "+
+			log.Fatalf("serve database suffers unrecoverable "+
 				"error: %v", err)
 		}
 

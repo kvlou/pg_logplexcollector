@@ -38,7 +38,7 @@
 //
 // serves.new must have at least the following structure:
 //
-//     {"serve": [
+//     {"serves": [
 //	    {"i": "identity1": "t": "serve1", "p": "/var/run/cluster1/log.sock"},
 //	    {"i": "identity2": "t": "serve2", "p": "/var/run/cluster2/log.sock"}
 //	 ]
@@ -71,6 +71,13 @@ type serveDb struct {
 	// serves.loaded from a cold start.
 	beyondFirstTime bool
 }
+
+type serveRecord struct {
+	I string
+	T string
+	P string
+}
+
 
 // Return value for complex multiple-error cases, as there are code
 // paths here where error reporting itself can have errors.  Since
@@ -105,7 +112,7 @@ func (t *serveDb) errPath() string {
 	return path.Join(t.path, "last_error")
 }
 
-func (t *serveDb) Resolve(ident string) (string, bool) {
+func (t *serveDb) Resolve(ident string) (serveRecord, bool) {
 	t.accessProtect.RLock()
 	defer t.accessProtect.RUnlock()
 	tok, ok := t.identToServe[ident]
@@ -327,7 +334,7 @@ func (t *serveDb) parse(contents []byte) (map[string]string, error) {
 	}
 
 	maybeServeMap := filled["serves"]
-	maybeDict, ok := maybeServeMap.(map[string]interface{})
+	maybeList, ok := maybeServeMap.([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("Expected 'serves' key to contain "+
 			"a JSON dictionary, instead it contains %T",
@@ -339,7 +346,7 @@ func (t *serveDb) parse(contents []byte) (map[string]string, error) {
 	// right-hand-side of the dictionary, where the serve value
 	// ought to be.
 	newMapping := make(map[string]string)
-	for ident, maybeTok := range maybeDict {
+	for ident, maybeTok := range maybeList {
 		tok, ok := maybeTok.(string)
 		if !ok {
 			return nil, fmt.Errorf("Expected string for serve "+

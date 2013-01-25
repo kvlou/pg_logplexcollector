@@ -59,25 +59,28 @@ import (
 	"sync"
 )
 
+type sKey struct {
+	I string
+	P string
+}
+
+type serveRecord struct {
+	sKey
+	T string
+}
+
 type serveDb struct {
 	path string
 
 	// For safety under concurrent access
 	accessProtect sync.RWMutex
 
-	identToServe map[string]string
+	identToServe map[sKey]*serveRecord
 
 	// To control semantics of first Poll(), which may load
 	// serves.loaded from a cold start.
 	beyondFirstTime bool
 }
-
-type serveRecord struct {
-	I string
-	T string
-	P string
-}
-
 
 // Return value for complex multiple-error cases, as there are code
 // paths here where error reporting itself can have errors.  Since
@@ -92,7 +95,7 @@ type multiError struct {
 func newServeDb(path string) *serveDb {
 	return &serveDb{
 		path:         path,
-		identToServe: make(map[string]string),
+		identToServe: make(map[sKey]*serveRecord),
 	}
 }
 
@@ -112,15 +115,16 @@ func (t *serveDb) errPath() string {
 	return path.Join(t.path, "last_error")
 }
 
-func (t *serveDb) Resolve(ident string) (serveRecord, bool) {
+func (t *serveDb) Resolve(k sKey) (*serveRecord, bool) {
 	t.accessProtect.RLock()
 	defer t.accessProtect.RUnlock()
-	tok, ok := t.identToServe[ident]
 
-	return tok, ok
+	rec, ok := t.identToServe[k]
+
+	return rec, ok
 }
 
-func (t *serveDb) protWrite(newMap map[string]string) {
+func (t *serveDb) protWrite(newMap map[sKey]*serveRecord) {
 	t.accessProtect.Lock()
 	defer t.accessProtect.Unlock()
 
@@ -320,7 +324,50 @@ func (t *serveDb) reject(submitPath string, nonfatale error) (err error) {
 	return nil
 }
 
-func (t *serveDb) parse(contents []byte) (map[string]string, error) {
+func projectFromJson(v interface{}) (*serveRecord, error) {
+	maybeMap, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf(
+			"expected a JSON map for in the \"serve\" list, "+
+				"instead received %v", v)
+	}
+
+	lookup := func(key string) (string, error) {
+		ms, ok := maybeMap[key]
+		if !ok {
+			return "", fmt.Errorf("did not receive an expected "+
+				"(\"%s\") key in serve record", key)
+		}
+
+		s, ok := ms.(string)
+		if !ok {
+			return "", fmt.Errorf("expected string value for key "+
+				"(\"%s\") key in serve record", key)
+		}
+
+		return s, nil
+	}
+
+	path, err := lookup("p")
+	if err != nil {
+		return nil, err
+	}
+
+	tok, err := lookup("t")
+	if err != nil {
+		return nil, err
+	}
+
+	ident, err := lookup("i")
+	if err != nil {
+		return nil, err
+	}
+
+	return &serveRecord{sKey: sKey{P: path, I: ident},
+		T: tok}, nil
+}
+
+func (t *serveDb) parse(contents []byte) (map[sKey]*serveRecord, error) {
 	filled := make(map[string]interface{})
 	filledp := &filled
 	err := json.Unmarshal(contents, filledp)
@@ -333,27 +380,26 @@ func (t *serveDb) parse(contents []byte) (map[string]string, error) {
 			"expected JSON dictionary, got JSON null")
 	}
 
-	maybeServeMap := filled["serves"]
-	maybeList, ok := maybeServeMap.([]interface{})
+	maybeServeValue := filled["serves"]
+	maybeList, ok := maybeServeValue.([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("Expected 'serves' key to contain "+
-			"a JSON dictionary, instead it contains %T",
-			maybeServeMap)
+			"a JSON list, instead it contains %T",
+			maybeServeValue)
 	}
 
 	// Fill a new mapping, optimistic that the input is correct,
 	// but abort if a non-JSON string is found on the
 	// right-hand-side of the dictionary, where the serve value
 	// ought to be.
-	newMapping := make(map[string]string)
-	for ident, maybeTok := range maybeList {
-		tok, ok := maybeTok.(string)
-		if !ok {
-			return nil, fmt.Errorf("Expected string for serve "+
-				"value, instead received type %T", maybeTok)
+	newMapping := make(map[sKey]*serveRecord)
+	for _, val := range maybeList {
+		rec, err := projectFromJson(val)
+		if err != nil {
+			return nil, err
 		}
 
-		newMapping[ident] = tok
+		newMapping[rec.sKey] = rec
 	}
 
 	return newMapping, nil

@@ -156,7 +156,7 @@ func processLogRec(lr *logRecord, lpc *logplexc.Client, exit exitFn) {
 	}
 }
 
-func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *serveDb) {
+func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, sr *serveRecord) {
 	var m femebe.Message
 	var err error
 	stream := femebe.NewServerMessageStream("", rwc)
@@ -204,13 +204,13 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *serveDb) {
 	log.Printf("client connects with identifier %q", ident)
 
 	// Resolve the identifier to a serve
-	tok, ok := tdb.Resolve(ident)
-	if !ok {
-		exit("could not resolve identifier to serve: %q", ident)
+	if sr.I != ident {
+		exit("got unexpected identifier for socket: "+
+			"path %s, expected %s, got %s", sr.P, sr.I, ident)
 	}
 
 	// Set up client with serve
-	cfg.Token = tok
+	cfg.Token = sr.T
 	client, err := logplexc.NewClient(&cfg)
 	if err != nil {
 		exit(err)
@@ -221,10 +221,57 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, tdb *serveDb) {
 	processLogMsg(client, msgInit, exit)
 }
 
+func listen(logplexUrl url.URL, sr *serveRecord) {
+	// Begin listening
+	l, err := net.Listen("unix", sr.P)
+	if err != nil {
+		log.Fatalf(
+			"exiting, cannot listen to %q: %v",
+			sr.P, err)
+	}
+
+	// Create a template config in each listening goroutine, for a
+	// tiny bit more defensive programming against accidental
+	// mutations of the base template that could cause
+	// cross-tenant spillage.
+	client := *http.DefaultClient
+	client.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+
+	templateConfig := logplexc.Config{
+		Logplex:            logplexUrl,
+		HttpClient:         client,
+		RequestSizeTrigger: 100 * KB,
+		Concurrency:        3,
+		Period:             3 * time.Second,
+
+		// Set at connection start-up when the client
+		// self-identifies.
+		Token: "",
+	}
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			log.Printf("accept error: %v", err)
+		}
+
+		if err != nil {
+			log.Fatalf("serve database suffers unrecoverable "+
+				"error: %v", err)
+		}
+
+		go logWorker(conn, templateConfig, sr)
+	}
+}
+
 func main() {
 	// Input checking
 	if len(os.Args) != 2 {
-		log.Printf("Usage: pg_logplexcollector LISTENADDR\n")
+		log.Printf("Usage: pg_logplexcollector\n")
 		os.Exit(1)
 	}
 
@@ -250,71 +297,34 @@ func main() {
 		log.Fatal("LOGPLEX_URL is unset")
 	}
 
-	logplexUrl, err := url.Parse(os.Getenv("LOGPLEX_URL"))
+	_, err := url.Parse(os.Getenv("LOGPLEX_URL"))
 	if err != nil {
 		log.Fatalf("LOGPLEX_URL: could not parse: %q",
 			os.Getenv("LOGPLEX_URL"))
 	}
 
 	// Set up serve database and perform its input checking
-	tdbDir := os.Getenv("SERVE_DB_DIR")
-	if tdbDir == "" {
+	sdbDir := os.Getenv("SERVE_DB_DIR")
+	if sdbDir == "" {
 		log.Fatal("SERVE_DB_DIR is unset: it must have the value " +
 			"of an existing serve database.  " +
 			"This can be an be an empty directory.")
 	}
 
-	tdb := newServeDb(tdbDir)
-	err = tdb.Poll()
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Fatal("SERVE_DB_DIR is set to a non-existant "+
-				"directory: %v", err)
-		}
-
-		log.Fatalf("serve database suffers an unrecoverable error: %v",
-			err)
-	}
-
-	client := *http.DefaultClient
-	client.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-	}
-
-	templateConfig := logplexc.Config{
-		Logplex:            *logplexUrl,
-		HttpClient:         client,
-		RequestSizeTrigger: 100 * KB,
-		Concurrency:        3,
-		Period:             3 * time.Second,
-
-		// Set at connection start-up when the client
-		// self-identifies.
-		Token: "",
-	}
-
-	// Begin listening
-	l, err := net.Listen("unix", os.Args[1])
-	if err != nil {
-		log.Fatalf(
-			"exiting, cannot listen to %q: %v",
-			os.Args[1], err)
-	}
+	sdb := newServeDb(sdbDir)
 
 	for {
-		conn, err := l.Accept()
+		err = sdb.Poll()
 		if err != nil {
-			log.Printf("accept error: %v", err)
+			if os.IsNotExist(err) {
+				log.Fatal("SERVE_DB_DIR is set to a non-existant "+
+					"directory: %v", err)
+			}
+
+			log.Fatalf("serve database suffers an unrecoverable error: %v",
+				err)
 		}
 
-		err = tdb.Poll()
-		if err != nil {
-			log.Fatalf("serve database suffers unrecoverable "+
-				"error: %v", err)
-		}
-
-		go logWorker(conn, templateConfig, tdb)
+		time.Sleep(10 * time.Second)
 	}
 }

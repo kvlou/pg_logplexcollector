@@ -8,19 +8,20 @@ import (
 
 type fixturePair struct {
 	json     []byte
-	triplets []triplet
+	triplets []serveRecord
 }
 
 func (f *fixturePair) check(t *testing.T, sdb *serveDb) {
 	for _, triplet := range f.triplets {
-		resolvTok, ok := sdb.Resolve(triplet.I)
+		rec, ok := sdb.Resolve(
+			sKey{I: triplet.I, P: triplet.P})
 		if !ok {
 			t.Fatalf("Expected to find identifier %q", triplet.I)
 		}
 
-		if triplet.T != resolvTok {
+		if triplet.T != rec.T {
 			t.Fatalf("Expected to resolve to %v, "+
-				"but got %v instead", triplet.T, resolvTok)
+				"but got %v instead", triplet.T, rec.T)
 		}
 	}
 
@@ -33,9 +34,9 @@ var fixtures = []fixturePair{
 			`"p": "/p1/log.sock"}, ` +
 			`{"i": "banana", "t": "vanilla", ` +
 			`"p": "/p2/log.sock"}]}`),
-		triplets: []triplet{
-			{I: "apple", T: "chocolate"},
-			{I: "banana", T: "vanilla"},
+		triplets: []serveRecord{
+			{sKey{I: "apple", P: "/p1/log.sock"}, "chocolate"},
+			{sKey{I: "banana", P: "/p2/log.sock"}, "vanilla"},
 		},
 	},
 	{
@@ -44,9 +45,11 @@ var fixtures = []fixturePair{
 			`"p": "/p1/log.sock"}, ` +
 			`{"i": "nightstand", "t": "alarm clock", ` +
 			`"p": "/p2/log.sock"}]}`),
-		triplets: []triplet{
-			{I: "apple", T: "chocolate"},
-			{I: "banana", T: "vanilla"},
+		triplets: []serveRecord{
+			{sKey{I: "bed", P: "/p1/log.sock"},
+				"pillow"},
+			{sKey{I: "nightstand", P: "/p2/log.sock"},
+				"alarm clock"},
 		},
 	},
 }

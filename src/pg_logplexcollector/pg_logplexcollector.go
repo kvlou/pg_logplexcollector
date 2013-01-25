@@ -221,7 +221,7 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, sr *serveRecord) {
 	processLogMsg(client, msgInit, exit)
 }
 
-func listen(logplexUrl url.URL, sr *serveRecord) {
+func listen(die <-chan struct{}, logplexUrl url.URL, sr *serveRecord) {
 	// Begin listening
 	l, err := net.Listen("unix", sr.P)
 	if err != nil {
@@ -254,6 +254,14 @@ func listen(logplexUrl url.URL, sr *serveRecord) {
 	}
 
 	for {
+		switch die {
+		case die:
+			log.Print("listener exits normally from die request")
+			return
+		default:
+			break
+		}
+
 		conn, err := l.Accept()
 		if err != nil {
 			log.Printf("accept error: %v", err)
@@ -297,7 +305,7 @@ func main() {
 		log.Fatal("LOGPLEX_URL is unset")
 	}
 
-	_, err := url.Parse(os.Getenv("LOGPLEX_URL"))
+	logplexUrl, err := url.Parse(os.Getenv("LOGPLEX_URL"))
 	if err != nil {
 		log.Fatalf("LOGPLEX_URL: could not parse: %q",
 			os.Getenv("LOGPLEX_URL"))
@@ -313,8 +321,10 @@ func main() {
 
 	sdb := newServeDb(sdbDir)
 
+	var die chan struct{} = make(chan struct{})
+
 	for {
-		err = sdb.Poll()
+		nw, err := sdb.Poll()
 		if err != nil {
 			if os.IsNotExist(err) {
 				log.Fatal("SERVE_DB_DIR is set to a non-existant "+
@@ -323,6 +333,21 @@ func main() {
 
 			log.Fatalf("serve database suffers an unrecoverable error: %v",
 				err)
+		}
+
+		// New data found, signal goroutines serving traffic
+		// to die.
+		if nw {
+			close(die)
+
+			// A new channel value for a new generation of
+			// listen/accept goroutines
+			die = make(chan struct{})
+
+			snap := sdb.Snapshot()
+			for i := range snap {
+				go listen(die, *logplexUrl, &snap[i])
+			}
 		}
 
 		time.Sleep(10 * time.Second)

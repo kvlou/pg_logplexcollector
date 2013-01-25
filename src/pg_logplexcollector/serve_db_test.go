@@ -13,8 +13,7 @@ type fixturePair struct {
 
 func (f *fixturePair) check(t *testing.T, sdb *serveDb) {
 	for _, triplet := range f.triplets {
-		rec, ok := sdb.Resolve(
-			sKey{I: triplet.I, P: triplet.P})
+		rec, ok := sdb.identToServe[sKey{I: triplet.I, P: triplet.P}]
 		if !ok {
 			t.Fatalf("Expected to find identifier %q", triplet.I)
 		}
@@ -69,10 +68,27 @@ func TestEmptyDB(t *testing.T) {
 	defer os.RemoveAll(name)
 
 	sdb := newServeDb(name)
-	if err := sdb.Poll(); err != nil {
+	updates, err := sdb.Poll()
+
+	if err != nil {
 		t.Fatalf("Poll on an empty directory should succeed, "+
 			"instead failed: %v", err)
 	}
+
+	if !updates {
+		t.Fatal("Expect updates for first poll in an empty database")
+	}
+
+	updates, err = sdb.Poll()
+	if err != nil {
+		t.Fatalf("Poll on an empty directory should succeed, "+
+			"instead failed: %v", err)
+	}
+
+	if updates {
+		t.Fatal("Expect no updates for second poll")
+	}
+
 }
 
 func TestMultipleLoad(t *testing.T) {
@@ -84,7 +100,7 @@ func TestMultipleLoad(t *testing.T) {
 		fixture := &fixtures[i]
 		ioutil.WriteFile(sdb.newPath(), fixture.json, 0400)
 
-		if err := sdb.Poll(); err != nil {
+		if _, err := sdb.Poll(); err != nil {
 			t.Fatalf("Poll should succeed with valid input, "+
 				"instead: %v", err)
 		}
@@ -100,27 +116,27 @@ func TestMultipleLoad(t *testing.T) {
 	}
 }
 
+// Write out some valid input to serves.new.
+func writeLoadFixture(t *testing.T, sdb *serveDb, fixture *fixturePair) {
+	ioutil.WriteFile(sdb.newPath(), fixture.json, 0400)
+	if _, err := sdb.Poll(); err != nil {
+		t.Fatalf("Poll should succeed with valid input, "+
+			"instead: %v", err)
+	}
+}
+
 func TestIntermixedGoodBadInput(t *testing.T) {
 	name := newTmpDb(t)
 	defer os.RemoveAll(name)
 
 	sdb := newServeDb(name)
 
-	// Write out some valid input to serves.new.
-	writeLoadFixture := func(fixture *fixturePair) {
-		ioutil.WriteFile(sdb.newPath(), fixture.json, 0400)
-		if err := sdb.Poll(); err != nil {
-			t.Fatalf("Poll should succeed with valid input, "+
-				"instead: %v", err)
-		}
-	}
-
 	fixture := &fixtures[0]
-	writeLoadFixture(fixture)
+	writeLoadFixture(t, sdb, fixture)
 
 	// Write a bad serves.new file.
 	ioutil.WriteFile(sdb.newPath(), []byte(`{}`), 0400)
-	if err := sdb.Poll(); err != nil {
+	if _, err := sdb.Poll(); err != nil {
 		t.Fatalf("Poll should succeed with invalid input, "+
 			"instead: %v", err)
 	}
@@ -144,7 +160,7 @@ func TestIntermixedGoodBadInput(t *testing.T) {
 	// Submit a new set of good input, to see if the last_error
 	// and serves.rej are unlinked.
 	secondFixture := &fixtures[1]
-	writeLoadFixture(secondFixture)
+	writeLoadFixture(t, sdb, secondFixture)
 
 	// Make sure new data was loaded properly.
 	secondFixture.check(t, sdb)
@@ -173,7 +189,7 @@ func TestFirstTimeLoadPoll(t *testing.T) {
 	fixture := &fixtures[0]
 	ioutil.WriteFile(sdb.loadedPath(), fixture.json, 0400)
 
-	if err := sdb.Poll(); err != nil {
+	if _, err := sdb.Poll(); err != nil {
 		t.Fatalf("Poll should succeed with valid input, "+
 			"instead: %v", err)
 	}
@@ -186,7 +202,7 @@ func TestEmptyPoll(t *testing.T) {
 	defer os.RemoveAll(name)
 
 	sdb := newServeDb(name)
-	err := sdb.Poll()
+	_, err := sdb.Poll()
 	if err != nil {
 		t.Fatalf("An empty database should not cause an error, "+
 			"but got: %v", err)
@@ -206,12 +222,12 @@ func TestFirstLoadBad(t *testing.T) {
 
 	// Write a bad serves.new file.
 	ioutil.WriteFile(sdb.newPath(), []byte(`{}`), 0400)
-	if err := sdb.Poll(); err != nil {
+	if _, err := sdb.Poll(); err != nil {
 		t.Fatalf("Poll should succeed with invalid input, "+
 			"instead: %v", err)
 	}
 
-	err := sdb.Poll()
+	_, err := sdb.Poll()
 	if err != nil {
 		t.Fatalf("Rejected input should not cause an error, "+
 			"but got: %v", err)
@@ -227,5 +243,24 @@ func TestFirstLoadBad(t *testing.T) {
 	_, err = os.Stat(sdb.rejPath())
 	if err != nil {
 		t.Fatalf("serves.rej should exist: %v", err)
+	}
+}
+
+func TestSnapshot(t *testing.T) {
+	name := newTmpDb(t)
+	defer os.RemoveAll(name)
+
+	sdb := newServeDb(name)
+	snap := sdb.Snapshot()
+	if len(snap) != 0 {
+		t.Fatalf("Expect snapshot to have be empty")
+	}
+
+	fix := &fixtures[0]
+	writeLoadFixture(t, sdb, fix)
+
+	snap = sdb.Snapshot()
+	if len(snap) != len(fix.triplets) {
+		t.Fatalf("Expect snapshot to be filled, got %v", snap)
 	}
 }

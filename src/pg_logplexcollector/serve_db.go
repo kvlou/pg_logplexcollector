@@ -115,13 +115,28 @@ func (t *serveDb) errPath() string {
 	return path.Join(t.path, "last_error")
 }
 
-func (t *serveDb) Resolve(k sKey) (*serveRecord, bool) {
+func (t *serveDb) Snapshot() []serveRecord {
 	t.accessProtect.RLock()
 	defer t.accessProtect.RUnlock()
 
-	rec, ok := t.identToServe[k]
+	n := len(t.identToServe)
+	snap := make([]serveRecord, n, n)
+	i := 0
 
-	return rec, ok
+	for _, v := range t.identToServe {
+		snap[i] = *v
+		i += 1
+	}
+
+	// Recheck in case of race conditions.  Array bounds checking
+	// can catch cases of accidental writes to t.identToServe
+	// while filling snap, may as well check for deletions causing
+	// under-filling much the same.
+	if i < len(snap) {
+		panic("race condition or bookkeeping error in t.identToServe")
+	}
+
+	return snap
 }
 
 func (t *serveDb) protWrite(newMap map[sKey]*serveRecord) {
@@ -131,37 +146,38 @@ func (t *serveDb) protWrite(newMap map[sKey]*serveRecord) {
 	t.identToServe = newMap
 }
 
-func (t *serveDb) pollFirstTime() error {
+func (t *serveDb) pollFirstTime() (bool, error) {
 	lp := t.loadedPath()
 	contents, err := ioutil.ReadFile(lp)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// old serves.loaded doesn't exist: that's
 			// okay; it's just a fresh database.
-			return nil
-		} else {
-			return err
+			return true, nil
 		}
+
+		return true, err
 	}
 
 	newMapping, err := t.parse(contents)
 	if err != nil {
 		// The old 'loaded' mapping is thought to have been
 		// good, exit early if that is not true.
-		return err
+		return false, err
 	}
 
 	t.protWrite(newMapping)
 
-	return nil
+	return true, nil
 }
 
 // Poll for new routing information to load
-func (t *serveDb) Poll() (err error) {
+func (t *serveDb) Poll() (newInfo bool, err error) {
 	// Handle first execution on creation of the db instance.
 	if !t.beyondFirstTime {
-		if err = t.pollFirstTime(); err != nil {
-			return err
+		newInfo, err = t.pollFirstTime()
+		if err != nil {
+			return false, err
 		}
 
 		t.beyondFirstTime = true
@@ -171,14 +187,15 @@ func (t *serveDb) Poll() (err error) {
 	contents, err := ioutil.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
+
 			// This is the most common branch, where no
 			// serves.new file has been provided for
 			// loading.  Being that, silence the error.
-			return nil
+			return newInfo || false, nil
 		}
 
 		// Had some problems reading an existing file.
-		return err
+		return newInfo || false, err
 	}
 
 	// Validate that the JSON is in the expected format.
@@ -186,7 +203,7 @@ func (t *serveDb) Poll() (err error) {
 	if nonfatale != nil {
 		// Nope, can't understand the passed JSON, reject it.
 		if err := t.reject(p, nonfatale); err != nil {
-			return multiError{error: err, nested: nonfatale}
+			return newInfo || false, multiError{error: err, nested: nonfatale}
 		}
 
 		// Rejection went okay: that's not considered an error
@@ -195,14 +212,14 @@ func (t *serveDb) Poll() (err error) {
 		// errors, which otherwise tend to arise from serious
 		// conditions preventing data base manipulation like
 		// "out of disk".
-		return nil
+		return newInfo || false, nil
 	}
 
 	// The new serve mapping was loaded successfully: before
 	// installing it reflect its state in the data base first, so
 	// a crash will yield the new state rather than the old one.
 	if err := t.persistLoaded(contents); err != nil {
-		return err
+		return newInfo || false, err
 	}
 
 	// Remove last_error and serves.rej file as the persistence
@@ -214,7 +231,7 @@ func (t *serveDb) Poll() (err error) {
 	// Commit to the new mappings in this session.
 	t.protWrite(newMapping)
 
-	return nil
+	return true, nil
 }
 
 // Persist the verified contents, which are presumed valid.

@@ -264,3 +264,64 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("Expect snapshot to be filled, got %v", snap)
 	}
 }
+
+func TestSnapReload(t *testing.T) {
+	// Sketch how to use Poll() and Snapshot() together with
+	// goroutines.
+	name := newTmpDb(t)
+	defer os.RemoveAll(name)
+
+	sdb := newServeDb(name)
+	writeLoadFixture(t, sdb, &fixtures[0])
+
+	die := make(chan struct{})
+	deaths := make(chan bool)
+
+	justWait := func(die <-chan struct{}, r serveRecord) {
+		t.Logf("justWait started with %v", r)
+
+		for {
+			t.Logf("justWait 'running' with %v", r)
+			select {
+			case <-die:
+				t.Logf("justWait 'dies' with %v", r)
+				deaths <- true
+				return
+			default:
+				break
+			}
+		}
+	}
+
+	snapLoad := func(fix *fixturePair) {
+		writeLoadFixture(t, sdb, fix)
+
+		snap := sdb.Snapshot()
+		for i := range snap {
+			go justWait(die, snap[i])
+		}
+
+		close(die)
+
+		// Confirm everyone dies
+		for _ = range snap {
+			<-deaths
+		}
+	}
+
+	// Simulates a case where one calls Poll() repeatedly -- in
+	// fact, writeLoadFixture used above does do this and checks
+	// the results.
+	for i := range fixtures {
+		snapLoad(&fixtures[i])
+
+		// Have to make a new 'die' channel for each
+		// generation of goroutines.
+		die = make(chan struct{})
+	}
+
+	// If anyone gorooutines are left and trying to write to the
+	// deaths channel, (due to a programming error), try to force
+	// a panic by closing the death channel.
+	close(deaths)
+}

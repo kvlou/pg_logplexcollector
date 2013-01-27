@@ -39,8 +39,8 @@
 // serves.new must have at least the following structure:
 //
 //     {"serves": [
-//	    {"i": "identity1": "t": "serve1", "p": "/var/run/cluster1/log.sock"},
-//	    {"i": "identity2": "t": "serve2", "p": "/var/run/cluster2/log.sock"}
+//	    {"i": "identity1": "t": "token1", "p": "/var/run/cluster1/log.sock"},
+//	    {"i": "identity2": "t": "token2", "p": "/var/run/cluster2/log.sock"}
 //	 ]
 //     }
 //

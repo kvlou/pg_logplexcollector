@@ -39,6 +39,9 @@ type exitFn func(args ...interface{})
 // the filled message.
 type msgInit func(dst *femebe.Message, exit exitFn)
 
+// Used only in the close-to-broadcast style to exit goroutines.
+type dieCh <-chan struct{}
+
 // Read the version message, calling exit if this is not a supported
 // version.
 func processVerMsg(msgInit msgInit, exit exitFn) {
@@ -96,10 +99,19 @@ func processIdentMsg(msgInit msgInit, exit exitFn) string {
 }
 
 // Process a log message, sending it to the client.
-func processLogMsg(lpc *logplexc.Client, msgInit msgInit, exit exitFn) {
+func processLogMsg(die dieCh, lpc *logplexc.Client, msgInit msgInit,
+	exit exitFn) {
 	var m femebe.Message
 
 	for {
+		// Poll request to exit
+		select {
+		case <-die:
+			return
+		default:
+			break
+		}
+
 		msgInit(&m, exit)
 
 		// Refuse to handle any log message above an arbitrary
@@ -156,20 +168,10 @@ func processLogRec(lr *logRecord, lpc *logplexc.Client, exit exitFn) {
 	}
 }
 
-func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, sr *serveRecord) {
-	var m femebe.Message
+func logWorker(die dieCh, rwc io.ReadWriteCloser, cfg logplexc.Config,
+	sr *serveRecord) {
 	var err error
 	stream := femebe.NewServerMessageStream("", rwc)
-
-	// Exit in an orderly manner if (and only if) exit() is
-	// called; otherwise propagate the panic normally.
-	defer func() {
-		rwc.Close()
-
-		if r := recover(); r != nil && r != &m {
-			panic(r)
-		}
-	}()
 
 	var exit exitFn
 	exit = func(args ...interface{}) {
@@ -185,8 +187,20 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, sr *serveRecord) {
 			}
 		}
 
-		panic(&m)
+		panic(&exit)
 	}
+
+	// Recovers from panic and exits in an orderly manner if (and
+	// only if) exit() is called; otherwise propagate the panic
+	// normally.
+	defer func() {
+		rwc.Close()
+
+		// &exit is used as a sentinel value.
+		if r := recover(); r != nil && r != &exit {
+			panic(r)
+		}
+	}()
 
 	var msgInit msgInit
 	msgInit = func(m *femebe.Message, exit exitFn) {
@@ -218,10 +232,10 @@ func logWorker(rwc io.ReadWriteCloser, cfg logplexc.Config, sr *serveRecord) {
 
 	defer client.Close()
 
-	processLogMsg(client, msgInit, exit)
+	processLogMsg(die, client, msgInit, exit)
 }
 
-func listen(die <-chan struct{}, logplexUrl url.URL, sr *serveRecord) {
+func listen(die dieCh, logplexUrl url.URL, sr *serveRecord) {
 	// Begin listening
 	l, err := net.Listen("unix", sr.P)
 	if err != nil {
@@ -254,8 +268,8 @@ func listen(die <-chan struct{}, logplexUrl url.URL, sr *serveRecord) {
 	}
 
 	for {
-		switch die {
-		case die:
+		select {
+		case <-die:
 			log.Print("listener exits normally from die request")
 			return
 		default:
@@ -272,13 +286,13 @@ func listen(die <-chan struct{}, logplexUrl url.URL, sr *serveRecord) {
 				"error: %v", err)
 		}
 
-		go logWorker(conn, templateConfig, sr)
+		go logWorker(die, conn, templateConfig, sr)
 	}
 }
 
 func main() {
 	// Input checking
-	if len(os.Args) != 2 {
+	if len(os.Args) != 1 {
 		log.Printf("Usage: pg_logplexcollector\n")
 		os.Exit(1)
 	}
@@ -331,21 +345,27 @@ func main() {
 					"directory: %v", err)
 			}
 
-			log.Fatalf("serve database suffers an unrecoverable error: %v",
+			log.Fatalf(
+				"serve database suffers an unrecoverable error: %v",
 				err)
 		}
 
-		// New data found, signal goroutines serving traffic
-		// to die.
+		// New database state discovered: refresh the
+		// listeners and signal all existing server goroutines
+		// to exit.
 		if nw {
+			// Tell the generation of goroutines from the
+			// last version of the database to die.
 			close(die)
 
 			// A new channel value for a new generation of
 			// listen/accept goroutines
 			die = make(chan struct{})
 
+			// Set up new servers for the new database state.
 			snap := sdb.Snapshot()
 			for i := range snap {
+				os.Remove(snap[i].P)
 				go listen(die, *logplexUrl, &snap[i])
 			}
 		}

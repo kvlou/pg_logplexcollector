@@ -1,0 +1,9 @@
+general:
+  branches:
+    only:
+      - packaging_circleci
+
+## Customize dependencies
+dependencies:
+  pre:
+    - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package

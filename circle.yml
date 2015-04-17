@@ -10,7 +10,7 @@ machine:
 ## Customize dependencies
 dependencies:
   pre:
-    - gem install --no-ri --no-rdoc pacakge_cloud
+    - gem install --no-ri --no-rdoc package_cloud
     - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package
 
 deployment:

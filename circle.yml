@@ -11,10 +11,10 @@ machine:
 dependencies:
   pre:
     - gem install --no-ri --no-rdoc package_cloud
-    - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package
+    - docker run -e "DISTRO=ubuntu/precise" -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package
 
 deployment:
   production:
     branch: packaging_circleci
     commands:
-      - package_cloud push klou/ex/ubuntu/precise package/pg-logplexcollecotor*.deb
+      - package_cloud push klou/ex/ubuntu/precise $(pwd)/package/pg-logplexcollector_0.0.1_amd64.deb

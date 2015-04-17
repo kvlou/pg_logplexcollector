@@ -12,6 +12,9 @@ dependencies:
   pre:
     - gem install --no-ri --no-rdoc package_cloud
     - sudo pip install --upgrade bumpversion
+    - git config --global user.email "klou+circle@heroku.com"
+    - git config --global user.name "Circle CI"
+
   post:
     - bumpversion --tag --commit --current-version $(cat VERSION) patch VERSION
     - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package

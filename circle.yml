@@ -10,4 +10,11 @@ machine:
 ## Customize dependencies
 dependencies:
   pre:
+    - gem install --no-ri --no-rdoc pacakge_cloud
     - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package
+
+deployment:
+  production:
+    branch: packaging_circleci
+    commands:
+      - package_cloud push klou/ex/os/version package/pg-logplexcollecotor*.deb

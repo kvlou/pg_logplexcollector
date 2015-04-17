@@ -11,6 +11,9 @@ machine:
 dependencies:
   pre:
     - gem install --no-ri --no-rdoc package_cloud
+    - pip install --upgrade bumpversion
+  post:
+    - bumpversion --tag --commit --current-version $(cat VERSION) patch VERSION
     - docker run -v $(pwd):/p -i -t klou/dod-precise-builder make -f /p/package/Makefile package
     # - docker run -v $(pwd):/p -i -t klou/dod-trusty-builder make -f /p/package/Makefile package
 
@@ -19,4 +22,7 @@ deployment:
     branch: packaging_circleci
     commands:
       - package_cloud push klou/ex/ubuntu/precise $(pwd)/package/ubuntu/precise/*.deb
+  github:
+    commands:
+      - git push origin v$(cat VERSION)
       # - package_cloud push klou/ex/ubuntu/trusty $(pwd)/package/ubuntu/trusty/*.deb

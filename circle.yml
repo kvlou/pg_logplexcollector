@@ -17,4 +17,4 @@ deployment:
   production:
     branch: packaging_circleci
     commands:
-      - package_cloud push klou/ex/os/version package/pg-logplexcollecotor*.deb
+      - package_cloud push klou/ex/ubuntu/precise package/pg-logplexcollecotor*.deb

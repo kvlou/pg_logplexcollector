@@ -22,7 +22,5 @@ deployment:
     branch: packaging_circleci
     commands:
       - package_cloud push klou/ex/ubuntu/precise $(pwd)/package/ubuntu/precise/*.deb
-  github:
-    commands:
       - git push origin v$(cat VERSION)
       # - package_cloud push klou/ex/ubuntu/trusty $(pwd)/package/ubuntu/trusty/*.deb

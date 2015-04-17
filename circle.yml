@@ -3,6 +3,10 @@ general:
     only:
       - packaging_circleci
 
+machine:
+  services:
+    - docker
+
 ## Customize dependencies
 dependencies:
   pre:

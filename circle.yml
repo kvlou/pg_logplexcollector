@@ -26,4 +26,5 @@ deployment:
     commands:
       - package_cloud push klou/ex/ubuntu/precise $(pwd)/package/ubuntu/precise/*.deb
       - git push origin v$(cat VERSION)
+      - git push origin $CIRCLE_BRANCH
       # - package_cloud push klou/ex/ubuntu/trusty $(pwd)/package/ubuntu/trusty/*.deb
